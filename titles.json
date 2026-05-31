@@ -1,0 +1,8 @@
+{
+  "_comment": "Hand-curated watch list. appid is the number in a title's store URL, e.g. https://store.steampowered.com/app/489830 -> 489830. 'name' is only a fallback label; the live name is pulled from Steam. Replace the examples below with your titles.",
+  "titles": [
+    { "appid": 489830,  "name": "The Elder Scrolls V: Skyrim Special Edition" },
+    { "appid": 292030,  "name": "The Witcher 3: Wild Hunt" },
+    { "appid": 1086940, "name": "Baldur's Gate 3" }
+  ]
+}
