@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Steam Watch Lists</title>
+
+  <!-- React 18 + htm, vendored locally. htm (~1KB) gives JSX-like syntax via
+       tagged template literals with NO build step and NO in-browser compiler,
+       so the page loads instantly and reliably (no CDN, no Babel). -->
+  <script src="/vendor/react.production.min.js"></script>
+  <script src="/vendor/react-dom.production.min.js"></script>
+  <script src="/vendor/htm.umd.js"></script>
+
+  <style>
+    :root {
+      --bg: #0b0f17; --bg2: #0f1623; --card: #131c2b; --card-hover: #18233571;
+      --border: #1f2c3f; --border-strong: #2a3a52;
+      --text: #e6edf6; --muted: #8b9bb1; --faint: #5d6b82;
+      --accent: #6366f1; --accent-hover: #7c7ff5; --accent-soft: #6366f122;
+      --green: #22c55e; --green-soft: #22c55e1a; --red: #ef4444; --red-soft: #ef44441a;
+      --radius: 14px; --radius-sm: 10px;
+      --shadow: 0 10px 30px -12px rgba(0,0,0,.6);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; color: var(--text);
+      font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background:
+        radial-gradient(1200px 600px at 15% -10%, #1b2740 0%, transparent 55%),
+        radial-gradient(900px 500px at 110% 0%, #19243a 0%, transparent 50%),
+        var(--bg);
+      background-attachment: fixed;  /* keep the gradient fixed to the viewport, not scrolling */
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 40px 24px 80px; }
+
+    header.hero { margin-bottom: 28px; }
+    .hero h1 { margin: 0; font-size: 26px; letter-spacing: -.02em; font-weight: 700; }
+    .hero p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+
+    /* Search box */
+    .search { position: relative; margin-bottom: 8px; }
+    .search input {
+      width: 100%; padding: 15px 46px 15px 46px; font-size: 16px; color: var(--text);
+      background: var(--bg2); border: 1px solid var(--border-strong); border-radius: var(--radius);
+      outline: none; transition: border-color .15s, box-shadow .15s;
+    }
+    .search input::placeholder { color: var(--faint); }
+    .search input:focus { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+    .search .icon { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: var(--faint); }
+    .search .spinner { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); }
+    .hint { color: var(--faint); font-size: 12.5px; margin: 0 2px 22px; }
+
+    .spinner {
+      width: 18px; height: 18px; border-radius: 50%;
+      border: 2px solid var(--border-strong); border-top-color: var(--accent);
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: translateY(-50%) rotate(360deg); } }
+    .spinner.inline { display: inline-block; vertical-align: -3px; animation: spin2 .7s linear infinite; }
+    @keyframes spin2 { to { transform: rotate(360deg); } }
+
+    /* Result cards — auto-fit on desktop, then 2 on tablets, 1 on phones. */
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 12px; }
+    .result {
+      display: flex; gap: 12px; align-items: center; padding: 12px; min-width: 0;
+      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+      transition: border-color .15s, transform .12s, background .15s;
+    }
+    .result:hover { border-color: var(--border-strong); background: var(--card-hover); transform: translateY(-1px); }
+    .result img { width: 104px; height: 39px; object-fit: cover; border-radius: 8px; background: #0a0e15; flex: none; }
+    .result .meta { flex: 1; min-width: 0; }
+    .result .name { font-weight: 600; line-height: 1.25; display: -webkit-box;
+      -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .result .sub { color: var(--muted); font-size: 12px; margin-top: 2px; display: flex; gap: 6px 8px; align-items: center; flex-wrap: wrap; }
+    .badge {
+      font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; font-weight: 700;
+      padding: 2px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-hover);
+    }
+    .price-grp { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+    .price { color: var(--text); font-weight: 700; font-size: 13px; }
+    .price.free { color: var(--green); }
+    .price-old { color: var(--faint); text-decoration: line-through; font-size: 11.5px; }
+    .sale {
+      font-size: 11px; font-weight: 800; padding: 1px 6px; border-radius: 6px;
+      background: #4c9a2a; color: #beee11; letter-spacing: .02em;
+    }
+    .result .actions { display: flex; flex-direction: column; gap: 6px; flex: none; }
+
+    button { font: inherit; cursor: pointer; border: 1px solid transparent; border-radius: var(--radius-sm); transition: background .15s, border-color .15s, color .15s, opacity .15s; }
+    button:active { transform: translateY(1px); }
+    .btn-add { padding: 6px 11px; font-size: 12.5px; font-weight: 600; background: var(--bg2); border-color: var(--border-strong); color: var(--text); white-space: nowrap; }
+    .btn-add:hover { border-color: var(--accent); color: var(--accent-hover); }
+    .btn-add.done { background: var(--green-soft); border-color: var(--green); color: var(--green); }
+    .btn-primary { background: var(--accent); color: #fff; padding: 12px 16px; font-weight: 600; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-primary:disabled { opacity: .55; cursor: default; }
+    .icon-btn { background: transparent; color: var(--faint); padding: 6px 9px; font-size: 15px; line-height: 1; }
+    .icon-btn:hover { color: var(--red); background: var(--red-soft); }
+
+    .empty { color: var(--faint); font-size: 13.5px; padding: 14px 2px; }
+
+    /* Lists */
+    .lists { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 40px; }
+    .panel { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-bottom: 1px solid var(--border); }
+    .panel-head h2 { margin: 0; font-size: 15px; font-weight: 650; display: flex; align-items: center; gap: 9px; }
+    .pill { font-size: 12px; color: var(--muted); background: var(--bg2); border: 1px solid var(--border); padding: 2px 9px; border-radius: 999px; }
+    .panel ul { list-style: none; margin: 0; padding: 8px; }
+    .panel li { display: flex; align-items: center; gap: 6px 10px; padding: 10px 12px; border-radius: var(--radius-sm); transition: background .12s; flex-wrap: wrap; }
+    .panel li:hover { background: var(--bg2); }
+    .panel li .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .panel li a { color: var(--text); text-decoration: none; }
+    .panel li a:hover { color: var(--accent-hover); }
+    .panel li .id { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+    /* Manual add */
+    .manual { margin-top: 36px; padding: 18px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); }
+    .manual .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .manual input { background: var(--card); border: 1px solid var(--border-strong); color: var(--text); border-radius: var(--radius-sm); padding: 11px 13px; outline: none; }
+    .manual input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    .manual input.appid { width: 130px; }
+    .manual input.nm { flex: 1; min-width: 160px; }
+
+    /* Toasts */
+    .toasts { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; align-items: center; z-index: 50; }
+    .toast { background: var(--card); border: 1px solid var(--border-strong); color: var(--text); padding: 11px 16px; border-radius: 12px; box-shadow: var(--shadow); font-size: 13.5px; animation: rise .25s ease; }
+    .toast.ok { border-color: var(--green); }
+    .toast.err { border-color: var(--red); }
+    @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+    @media (max-width: 720px) { .lists { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script>
+    const { useState, useEffect, useCallback } = React;
+    const html = htm.bind(React.createElement);
+    const STORE = "https://store.steampowered.com/app/";
+    const byName = (a, b) =>
+      String(a.name || "").toLowerCase().localeCompare(String(b.name || "").toLowerCase());
+
+    async function api(method, path, body, signal) {
+      const opts = { method, signal, headers: {} };
+      if (body) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+      const res = await fetch(path, opts);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    function useToasts() {
+      const [toasts, setToasts] = useState([]);
+      const push = useCallback((msg, kind = "ok") => {
+        const id = Math.random().toString(36).slice(2);
+        setToasts((t) => [...t, { id, msg, kind }]);
+        setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2600);
+      }, []);
+      return [toasts, push];
+    }
+
+    function SearchIcon() {
+      return html`
+        <svg className="icon" width="18" height="18" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>`;
+    }
+
+    function fmtPrice(cents, currency) {
+      const amt = cents / 100;
+      try { return new Intl.NumberFormat(undefined, { style: "currency", currency: currency || "EUR" }).format(amt); }
+      catch (e) { return amt.toFixed(2) + (currency ? " " + currency : ""); }
+    }
+
+    // Prefer Steam's pre-formatted string (tracked items) else format cents (search).
+    function priceStr(item, kind) {
+      const fmt = kind === "final" ? item.fmt_final : item.fmt_initial;
+      if (fmt) return fmt;
+      const cents = kind === "final" ? item.price_final : item.price_initial;
+      return cents == null ? null : fmtPrice(cents, item.currency);
+    }
+
+    function PriceTag({ item }) {
+      if (!item || (item.price_final == null && !item.fmt_final)) return null;  // free/unpriced: no tag
+      const finalEl = item.price_final === 0
+        ? html`<span className="price free">Free</span>`
+        : html`<span className="price">${priceStr(item, "final")}</span>`;
+      if (item.discount_pct > 0) {
+        const orig = priceStr(item, "initial");
+        return html`<span className="price-grp">
+          <span className="sale">-${item.discount_pct}%</span>
+          ${finalEl}
+          ${orig && html`<span className="price-old">${orig}</span>`}
+        </span>`;
+      }
+      return html`<span className="price-grp">${finalEl}</span>`;
+    }
+
+    function ResultCard({ item, onAdd, inList }) {
+      return html`
+        <div className="result">
+          ${item.image
+            ? html`<img src=${item.image} alt="" onError=${(e) => (e.currentTarget.style.visibility = "hidden")} />`
+            : html`<div style=${{ width: 104, height: 39, borderRadius: 8, background: "#0a0e15", flex: "none" }} />`}
+          <div className="meta">
+            <div className="name">${item.name}</div>
+            <div className="sub">
+              <span className="badge">${item.type || "app"}</span>
+              <span>#${item.appid}</span>
+              <${PriceTag} item=${item} />
+            </div>
+          </div>
+          <div className="actions">
+            ${["games", "hardware"].map((which) => html`
+              <button key=${which} className=${"btn-add" + (inList[which] ? " done" : "")}
+                      onClick=${() => onAdd(which, item)}>
+                ${inList[which] ? "✓ " : "+ "}${which === "games" ? "Games" : "Hardware"}
+              </button>`)}
+          </div>
+        </div>`;
+    }
+
+    function ListPanel({ title, icon, entries, prices, onRemove }) {
+      return html`
+        <div className="panel">
+          <div className="panel-head">
+            <h2>${icon} ${title}</h2>
+            <span className="pill">${entries.length}</span>
+          </div>
+          ${entries.length === 0
+            ? html`<div className="empty" style=${{ padding: 16 }}>Nothing here yet.</div>`
+            : html`<ul>
+                ${entries.map((e) => html`
+                  <li key=${e.appid}>
+                    <span className="nm"><a href=${STORE + e.appid} target="_blank" rel="noopener">${e.name}</a></span>
+                    <${PriceTag} item=${prices[e.appid]} />
+                    <span className="id">${e.appid}</span>
+                    <button className="icon-btn" title="Remove" onClick=${() => onRemove(e.appid)}>✕</button>
+                  </li>`)}
+              </ul>`}
+        </div>`;
+    }
+
+    function App() {
+      const [query, setQuery] = useState("");
+      const [results, setResults] = useState([]);
+      const [searching, setSearching] = useState(false);
+      const [searched, setSearched] = useState(false);
+      const [lists, setLists] = useState({ games: [], hardware: [] });
+      const [prices, setPrices] = useState({});
+      const [toasts, toast] = useToasts();
+
+      const refreshLists = useCallback(async () => {
+        try { setLists(await api("GET", "/api/lists")); }
+        catch (e) { toast(e.message, "err"); }
+      }, [toast]);
+
+      useEffect(() => { refreshLists(); }, [refreshLists]);
+
+      // Lazily enrich tracked items with live price/discount. Kept separate from
+      // /api/lists so the lists render instantly; prices fill in when they arrive.
+      // Re-runs only when the set of tracked appids changes.
+      const appidKey = [...lists.games, ...lists.hardware].map((e) => e.appid).sort((a, b) => a - b).join(",");
+      useEffect(() => {
+        if (!appidKey) return;
+        let active = true;
+        api("GET", `/api/prices?appids=${appidKey}`)
+          .then((d) => { if (active) setPrices((p) => ({ ...p, ...(d.prices || {}) })); })
+          .catch(() => {});
+        return () => { active = false; };
+      }, [appidKey]);
+
+      // Search-as-you-type: debounced. Each run owns its own AbortController and
+      // an `active` flag; the cleanup aborts the in-flight request and marks the
+      // run inactive, so only the latest query can ever update state (no races,
+      // no stale response overwriting a newer one).
+      useEffect(() => {
+        const q = query.trim();
+        if (q.length < 2) { setResults([]); setSearched(false); setSearching(false); return; }
+
+        const ctrl = new AbortController();
+        let active = true;
+        setSearching(true);
+        const t = setTimeout(async () => {
+          try {
+            const data = await api("GET", `/api/search?q=${encodeURIComponent(q)}`, null, ctrl.signal);
+            if (active) { setResults(data.results || []); setSearched(true); }
+          } catch (e) {
+            if (active && e.name !== "AbortError") { toast(e.message, "err"); setResults([]); setSearched(true); }
+          } finally {
+            if (active) setSearching(false);
+          }
+        }, 300);
+        return () => { active = false; clearTimeout(t); ctrl.abort(); };
+      }, [query, toast]);
+
+      const inListMap = useCallback((appid) => ({
+        games: lists.games.some((e) => e.appid === appid),
+        hardware: lists.hardware.some((e) => e.appid === appid),
+      }), [lists]);
+
+      const add = useCallback(async (which, appid, name) => {
+        // Optimistic: reflect the add in the list immediately, before the server
+        // responds (a manual add also does a name lookup server-side, so the POST
+        // can take a moment). Then reconcile with the server's authoritative list.
+        setLists((prev) => {
+          if (prev[which].some((e) => e.appid === appid)) return prev;
+          return { ...prev, [which]: [...prev[which], { appid, name: name || String(appid) }].sort(byName) };
+        });
+        try {
+          const r = await api("POST", `/api/${which}`, { appid, name });
+          setLists((prev) => ({ ...prev, [which]: r.entries }));
+          toast(r.added ? `Added “${r.entry.name}” to ${which}` : `Already in ${which}`, r.added ? "ok" : "err");
+        } catch (e) {
+          toast(e.message, "err");
+          refreshLists();  // request failed — revert the optimistic insert to server truth
+        }
+      }, [toast, refreshLists]);
+
+      const remove = useCallback(async (which, appid) => {
+        try {
+          const r = await api("DELETE", `/api/${which}/${appid}`);
+          setLists((prev) => ({ ...prev, [which]: r.entries }));
+        } catch (e) { toast(e.message, "err"); }
+      }, [toast]);
+
+      return html`
+        <div className="wrap">
+          <header className="hero">
+            <h1>🎮 Steam Watch Lists</h1>
+            <p>Search Steam and add titles to <b>Games</b> (sale digest) or <b>Hardware</b> (availability watcher).</p>
+          </header>
+
+          <div className="search">
+            <${SearchIcon} />
+            <input autoFocus type="text" placeholder="Search Steam… (starts after 2 letters)"
+                   value=${query} onChange=${(e) => setQuery(e.target.value)} />
+            ${searching && html`<div className="spinner" />`}
+          </div>
+          <p className="hint">Results update as you type.</p>
+
+          ${query.trim().length >= 2 && (
+            results.length > 0
+              ? html`<div className="grid">
+                  ${results.map((item) => html`
+                    <${ResultCard} key=${item.appid} item=${item} inList=${inListMap(item.appid)}
+                                   onAdd=${(which, it) => add(which, it.appid, it.name)} />`)}
+                </div>`
+              : (!searching && searched) ? html`<div className="empty">No matches for “${query.trim()}”.</div>` : null
+          )}
+
+          <div className="lists">
+            <${ListPanel} title="Games" icon="🎮" entries=${lists.games} prices=${prices}
+                          onRemove=${(appid) => remove("games", appid)} />
+            <${ListPanel} title="Hardware" icon="🕹️" entries=${lists.hardware} prices=${prices}
+                          onRemove=${(appid) => remove("hardware", appid)} />
+          </div>
+
+          <${ManualAdd} onAdd=${add} toast=${toast} />
+
+          <div className="toasts">
+            ${toasts.map((t) => html`<div key=${t.id} className=${"toast " + t.kind}>${t.msg}</div>`)}
+          </div>
+        </div>`;
+    }
+
+    function ManualAdd({ onAdd, toast }) {
+      const [appid, setAppid] = useState("");
+      const [name, setName] = useState("");
+      const submit = (which) => {
+        const id = parseInt(appid.trim(), 10);
+        if (!id) return toast("Enter a numeric appid", "err");
+        onAdd(which, id, name.trim());
+        setAppid(""); setName("");
+      };
+      return html`
+        <div className="manual">
+          <p className="hint" style=${{ margin: "0 0 12px" }}>
+            Can’t find it in search? Add by appid (the number in a store URL — name looked up if blank):
+          </p>
+          <div className="row">
+            <input className="appid" type="number" min="1" placeholder="appid"
+                   value=${appid} onChange=${(e) => setAppid(e.target.value)} />
+            <input className="nm" type="text" placeholder="name (optional)"
+                   value=${name} onChange=${(e) => setName(e.target.value)} />
+            <button className="btn-add" onClick=${() => submit("games")}>+ Games</button>
+            <button className="btn-add" onClick=${() => submit("hardware")}>+ Hardware</button>
+          </div>
+        </div>`;
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(html`<${App} />`);
+  </script>
+</body>
+</html>

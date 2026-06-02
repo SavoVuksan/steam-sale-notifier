@@ -1,0 +1,71 @@
+# Both scripts are one-shot: they run, post to Slack if something changed, and
+# exit. So these services aren't long-running daemons — you invoke them on a
+# schedule (host cron) or on demand:
+#
+#   docker compose run --rm notifier              # post the sale digest
+#   docker compose run --rm availability          # post availability changes
+#   docker compose run --rm notifier python notifier.py --dry-run   # preview
+#
+# `docker compose up` runs both once and exits.
+#
+# Config comes from .env (copy .env.example -> .env first). The "last run" state
+# is kept in a named volume so "NEW since last digest" works across runs.
+
+services:
+  notifier:
+    build: .
+    image: steam-sale-notifier
+    env_file: .env
+    environment:
+      STATE_DIR: /app/data
+    volumes:
+      - state:/app/data
+      # Curated list mounted from the host so you (and the future web UI) can
+      # edit it without rebuilding the image. Read-only for the script itself.
+      - ./titles.json:/app/titles.json:ro
+    command: ["python", "notifier.py"]
+    restart: "no"
+
+  availability:
+    build: .
+    image: steam-sale-notifier
+    env_file: .env
+    environment:
+      STATE_DIR: /app/data
+    volumes:
+      - state:/app/data
+      # Curated hardware/coming-soon list, mounted from the host like titles.json.
+      - ./watchlist.json:/app/watchlist.json:ro
+    command: ["python", "availability.py"]
+    restart: "no"
+
+  # Long-running web UI to curate the two lists. Search Steam, add/remove
+  # # titles. Edits land in the same titles.json / watchlist.json the one-shot
+  # # services read on their next run. LAN-only, no auth — see deploy notes.
+  webui:
+    build:
+      context: .
+      dockerfile: Dockerfile.webui
+    image: steam-sale-webui
+    env_file: .env
+    # Run as root so the UI can WRITE the bind-mounted titles.json/watchlist.json.
+    # Under rootless Docker, container-root maps to your unprivileged host user,
+    # so the files stay owned by you on the host (not actually root).
+    user: "0:0"
+    environment:
+      CONFIG_DIR: /app
+    ports:
+      # Host 8083 -> container 8080 (the app listens on 8080 inside). To
+      # restrict to one LAN interface, prefix with the IP, e.g.
+      # "192.168.1.10:8083:8080".
+      - "8083:8080"
+    volumes:
+      # Read-write here: the UI edits these. Same files the scripts read.
+      - ./titles.json:/app/titles.json
+      - ./watchlist.json:/app/watchlist.json
+      # Serve the frontend from the host so UI edits show on refresh, no rebuild.
+      - ./webui/static:/app/webui/static:ro
+    restart: unless-stopped
+
+volumes:
+  state:

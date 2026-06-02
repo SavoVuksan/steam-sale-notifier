@@ -78,6 +78,76 @@ No third-party packages — standard library only (Python 3.8+).
 
 Adjust the path to wherever you place the folder.
 
+## Run with Docker
+
+Config can come from a `.env` file instead of shell `export`s (loaded by
+`envfile.py`, stdlib-only). Real environment variables still win over `.env`,
+so `docker run -e ...` overrides it.
+
+```sh
+cp .env.example .env      # then fill in SLACK_WEBHOOK_URL etc.
+docker compose build
+docker compose run --rm notifier                       # post the sale digest
+docker compose run --rm availability                   # post availability changes
+docker compose run --rm notifier python notifier.py --dry-run   # preview only
+```
+
+State (`state.json` / `availability_state.json`) is written to the `STATE_DIR`
+env var when set — the compose file points it at a named `state` volume so
+"new since last digest" survives across one-shot runs. Unset, it defaults to
+next to the script (unchanged for non-Docker runs).
+
+The curated lists `titles.json` (games) and `watchlist.json` (hardware /
+coming-soon) are **bind-mounted from the host** into the containers, so editing
+them on the host takes effect on the next run without rebuilding the image.
+(This is also what the planned web UI will edit.)
+
+## Deploy on a schedule (recommended: systemd timers)
+
+For an always-on VM, run both scripts as **one-shot containers on a timer**
+rather than a constantly-running container: each run is crash-isolated, nothing
+sits idle in RAM, and the two scripts get independent cadences (digest daily,
+availability hourly). Ready-made units and full install steps are in
+[`deploy/systemd/`](deploy/systemd/README.md):
+
+```sh
+sudo cp deploy/systemd/steam-*.service deploy/systemd/steam-*.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now steam-notifier.timer steam-availability.timer
+systemctl list-timers 'steam-*'        # confirm next run times
+```
+
+systemd timers give you `journalctl` logs per run and `Persistent=true`
+catch-up after downtime. (Plain host cron calling `docker compose run --rm`
+also works — see the cron example above.)
+
+## Web UI: curate the lists from a browser
+
+A small Flask app (`webui/`) lets you **search Steam by name and add titles** to
+either list without editing JSON by hand:
+
+- **Games** → `titles.json` (watched by `notifier.py`)
+- **Hardware / coming-soon** → `watchlist.json` (watched by `availability.py`)
+
+It writes the same files the scripts read (atomically, preserving their
+`_comment` header), so the next scheduled run picks up your changes. Search uses
+Steam's own (unofficial, no-key) store-search endpoint; you can also add by
+`appid` directly, and the name is looked up for you.
+
+```sh
+docker compose up -d webui      # build + run, then open http://<vm-ip>:8080
+# or locally without Docker:
+pip install -r webui/requirements.txt
+python -m webui.app             # http://localhost:8080
+```
+
+> **Access:** LAN-only, **no authentication** — it can edit your lists, so don't
+> expose port 8080 to the internet. Restrict it to a LAN interface
+> (`"192.168.x.y:8080:8080"` in `docker-compose.yml`) or put it behind a
+> reverse proxy / VPN. It runs Flask's built-in server, which is fine for
+> personal LAN use; front it with a WSGI server (waitress/gunicorn) if you want
+> something sturdier.
+
 ## Notes / tuning
 - **When it posts:** only on days with at least one new sale or a sale ending
   today. Otherwise it stays silent (state is still updated). The 📋 overview is

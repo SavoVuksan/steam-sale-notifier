@@ -1,0 +1,13 @@
+# Runs the availability watcher hourly (it stays silent unless something
+# changed, so hourly polling won't spam the channel). Useful near a launch.
+
+[Unit]
+Description=Run the Steam availability watcher hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

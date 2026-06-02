@@ -1,0 +1,17 @@
+# Steam availability watcher — one-shot. Triggered by steam-availability.timer.
+# Install: see deploy/systemd/README.md. Edit the path/User below if your
+# checkout or username differs, then `sudo systemctl daemon-reload`.
+
+[Unit]
+Description=Steam availability watcher -> Slack
+Documentation=https://github.com/your/repo
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=vuksan
+WorkingDirectory=/home/vuksan/steam-sale-notifier
+# `run --rm` starts a fresh container, runs once, and is removed on exit.
+ExecStart=/usr/bin/docker compose -f /home/vuksan/steam-sale-notifier/docker-compose.yml run --rm availability

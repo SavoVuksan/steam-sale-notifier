@@ -1,0 +1,14 @@
+# Runs the sale digest once a day at 09:00 local time.
+# Persistent=true => if the VM was off at 09:00, the run fires on next boot.
+
+[Unit]
+Description=Run the Steam sale digest daily
+
+[Timer]
+OnCalendar=*-*-* 09:00:00
+Persistent=true
+# Stagger slightly so it doesn't fire at the exact same instant as other timers.
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

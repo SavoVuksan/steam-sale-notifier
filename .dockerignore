@@ -1,0 +1,10 @@
+# Keep secrets, local state and git history out of the image.
+.env
+state.json
+state.json.tmp
+availability_state.json
+availability_state.json.tmp
+.git
+.gitignore
+__pycache__/
+*.pyc

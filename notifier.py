@@ -27,11 +27,20 @@ import urllib.parse
 from datetime import datetime, date
 from pathlib import Path
 
+from envfile import load_dotenv
+
 # --- Configuration -----------------------------------------------------------
+
+# Load .env (if present) before reading any config below. Real environment
+# variables still take precedence over .env values.
+load_dotenv()
 
 HERE = Path(__file__).resolve().parent
 TITLES_FILE = HERE / "titles.json"
-STATE_FILE = HERE / "state.json"
+# State lives next to the script by default; set STATE_DIR to redirect it to a
+# persistent location (e.g. a mounted volume when running in a container).
+STATE_DIR = Path(os.environ.get("STATE_DIR", HERE))
+STATE_FILE = STATE_DIR / "state.json"
 
 # Slack incoming webhook URL. Set as an env var so it never lands in git:
 #   export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
@@ -225,6 +234,7 @@ def load_json(path, default):
 
 
 def save_state(state):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = STATE_FILE.with_suffix(".json.tmp")
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(state, fh, indent=2, ensure_ascii=False)
