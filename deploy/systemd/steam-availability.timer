@@ -1,13 +1,18 @@
-# Runs the availability watcher hourly (it stays silent unless something
-# changed, so hourly polling won't spam the channel). Useful near a launch.
+# Runs the availability watcher every 20 minutes (it stays silent unless
+# something changed, so frequent polling won't spam the channel). A handful of
+# appids polled 3x/hour is trivial, well-behaved traffic against the same public
+# GetItems endpoint the store front-end uses. Good for catching a launch fast.
 
 [Unit]
-Description=Run the Steam availability watcher hourly
+Description=Run the Steam availability watcher every 20 minutes
 
 [Timer]
-OnCalendar=hourly
+# Fires at :00, :20, :40 of every hour.
+OnCalendar=*:0/20
 Persistent=true
-RandomizedDelaySec=300
+# Small jitter so it never fires at the exact same instant as other timers,
+# while staying comfortably inside each 20-minute window.
+RandomizedDelaySec=60
 
 [Install]
 WantedBy=timers.target

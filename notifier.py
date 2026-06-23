@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """
-Steam sale daily digest -> Slack incoming webhook.
+Steam sale change alerts -> Slack incoming webhook.
 
-Once a day, posts a single digest to a channel-scoped Slack incoming webhook
-with three sections, for a hand-curated list of Steam titles:
+Posts to a channel-scoped Slack incoming webhook only when a watched title's
+sale status actually changes, for a hand-curated list of Steam titles:
 
-  1. 🆕  NEW on sale since the last digest
-  2. ⏰  Ending today (last chance)
-  3. 📋  All titles currently on sale
+  1. 🆕  New on sale since the last run
+  2. 💸  Cheaper than before (already on sale, but at a new lower price)
+
+A title that was already on sale and is still on sale at the same (or a
+worse) price is NOT re-posted — only genuine changes are alerted.
 
 Pulls data from Steam's IStoreBrowseService/GetItems, which returns the
 discount percent, prices, and the discount end date in one batched call.
-A small state file remembers which titles were on sale last run, so "NEW"
-is computed against the previous digest.
+A small state file remembers the best price seen for each on-sale title, so
+"new" and "cheaper than before" are computed against the previous run.
 
-Designed to be run from cron once a day on an always-on VM. See README.md.
+Designed to be run from cron / a systemd timer on an always-on VM. Because it
+stays silent unless something changed, it can be run as often as you like.
+See README.md.
 """
 
 import calendar
@@ -250,11 +254,11 @@ def fmt_price(info):
     return info["final"]
 
 
-def fmt_line(info, show_time=False):
+def fmt_line(info):
     line = f"• <{info['url']}|*{info['name']}*> — {info['discount_pct']}% off, {fmt_price(info)}"
     if info["end_ts"]:
         end = datetime.fromtimestamp(info["end_ts"])
-        line += f" · ends {end.strftime('%H:%M today' if show_time else '%a %d %b')}"
+        line += f" · ends {end.strftime('%a %d %b')}"
     if info.get("itad"):
         line += f" · {info['itad']}"
     return line
@@ -267,17 +271,14 @@ def section(title, lines):
     }
 
 
-def build_blocks(new, ending, current, today_str):
+def build_blocks(new, better, today_str):
     blocks = [
-        {"type": "header", "text": {"type": "plain_text", "text": f"🎮 Daily Steam Sales — {today_str}"}},
+        {"type": "header", "text": {"type": "plain_text", "text": f"🎮 Steam sale update — {today_str}"}},
     ]
     if new:
         blocks.append(section("🆕 New on sale", [fmt_line(i) for i in new]))
-    if ending:
-        blocks.append(section("⏰ Ending today — last chance", [fmt_line(i, show_time=True) for i in ending]))
-    if current:
-        blocks.append({"type": "divider"})
-        blocks.append(section(f"📋 All current sales ({len(current)})", [fmt_line(i) for i in current]))
+    if better:
+        blocks.append(section("💸 Cheaper than before", [fmt_line(i) for i in better]))
     return blocks
 
 
@@ -291,6 +292,45 @@ def post_to_slack(blocks, text):
     )
     with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
         return resp.read().decode("utf-8")
+
+
+# --- Change detection ---------------------------------------------------------
+
+
+def load_prev_on_sale():
+    """Return {appid: baseline | None} for titles on sale at the last run.
+
+    baseline is {"final_cents", "discount_pct"} — the best deal we've alerted
+    for that title during its current on-sale streak. None means "known on sale
+    but with no recorded price" (an old list-format state, pre-upgrade); such a
+    title is adopted silently on the next run rather than re-alerted.
+    """
+    stored = load_json(STATE_FILE, {}).get("on_sale", {})
+    if isinstance(stored, list):  # migrate the old "set of appids" format
+        return {appid: None for appid in stored}
+    return stored
+
+
+def baseline_of(info):
+    return {"final_cents": info["final_cents"], "discount_pct": info["discount_pct"]}
+
+
+def is_better(info, base):
+    """True if `info` is a strictly better deal than the recorded baseline."""
+    cur_cents, base_cents = info["final_cents"], base.get("final_cents", 0)
+    if cur_cents and base_cents and cur_cents < base_cents:
+        return True
+    return info["discount_pct"] > base.get("discount_pct", 0)
+
+
+def merged_baseline(info, base):
+    """Best deal seen so far: price only ever drops, discount only ever rises."""
+    cur_cents, base_cents = info["final_cents"], base.get("final_cents", 0)
+    if cur_cents and base_cents:
+        cents = min(cur_cents, base_cents)
+    else:
+        cents = cur_cents or base_cents  # keep whichever price we actually know
+    return {"final_cents": cents, "discount_pct": max(info["discount_pct"], base.get("discount_pct", 0))}
 
 
 # --- Main ---------------------------------------------------------------------
@@ -311,41 +351,59 @@ def main():
     appids = [str(t["appid"]) for t in titles]
     items = fetch_items(appids)
 
-    # Keep only sales at/above the threshold; sort by deepest discount first.
+    # Keep only sales at/above the threshold.
     on_sale = {
         appid: info for appid, info in items.items() if info["discount_pct"] >= DISCOUNT_THRESHOLD
     }
-    current = sorted(on_sale.values(), key=lambda i: i["discount_pct"], reverse=True)
 
-    prev_on_sale = set(load_json(STATE_FILE, {}).get("on_sale", []))
-    new = [on_sale[a] for a in on_sale if a not in prev_on_sale]
+    # Compare each on-sale title against what we last alerted for it. A title is
+    # only worth posting when it's newly on sale, or now cheaper / more deeply
+    # discounted than the best deal we've already shown. A title still on sale at
+    # the same (or a worse) price stays silent. Titles that have dropped off sale
+    # fall out of new_state, so if they return later they count as "new" again.
+    prev = load_prev_on_sale()
+    new, better = [], []          # info dicts to post
+    posted = {}                   # appid -> info, for ITAD enrichment
+    new_state = {}                # appid -> baseline, persisted for next run
+
+    for appid, info in on_sale.items():
+        base = prev.get(appid)
+        if appid not in prev:                 # newly on sale
+            new.append(info)
+            posted[appid] = info
+            new_state[appid] = baseline_of(info)
+        elif base is None:                    # known from a pre-upgrade run; adopt silently
+            new_state[appid] = baseline_of(info)
+        elif is_better(info, base):           # already on sale, but a better price now
+            better.append(info)
+            posted[appid] = info
+            new_state[appid] = merged_baseline(info, base)
+        else:                                 # unchanged or worse — keep best seen, stay quiet
+            new_state[appid] = merged_baseline(info, base)
+
     new.sort(key=lambda i: i["discount_pct"], reverse=True)
+    better.sort(key=lambda i: i["discount_pct"], reverse=True)
 
-    today = date.today()
-    ending = [
-        i for i in current if i["end_ts"] and datetime.fromtimestamp(i["end_ts"]).date() == today
-    ]
+    print(f"checked {len(titles)} titles: {len(on_sale)} on sale (>= {DISCOUNT_THRESHOLD}%), "
+          f"{len(new)} new, {len(better)} cheaper than before")
 
-    print(f"checked {len(titles)} titles: {len(current)} on sale (>= {DISCOUNT_THRESHOLD}%), "
-          f"{len(new)} new, {len(ending)} ending today")
-
-    # Only post when something actionable changed: a new sale, or a sale ending
-    # today. We don't re-post the unchanged overview day after day. The overview
-    # is still included in the message whenever we do post.
-    if not new and not ending:
+    # Only post on a genuine change: a new sale or a better price. Nothing
+    # changed => stay silent, but still persist the refreshed baselines.
+    if not new and not better:
         if dry_run:
-            print("(dry run) no new or ending-today sales; nothing would be posted")
+            print("(dry run) no new sales or price drops; nothing would be posted")
             return 0
-        save_state({"on_sale": list(on_sale.keys())})
-        print("no new or ending-today sales; nothing posted")
+        save_state({"on_sale": new_state})
+        print("no new sales or price drops; nothing posted")
         return 0
 
-    # Tag each sale with all-time-low context (no-op unless ITAD_API_KEY is set).
-    # new/ending/current all reference the same dicts, so this reaches every line.
-    enrich_with_itad(on_sale)
+    # Tag each posted sale with all-time-low context (no-op unless ITAD_API_KEY
+    # is set). new/better reference the same dicts in `posted`, so tags reach
+    # every line. Only the titles we're actually posting are looked up.
+    enrich_with_itad(posted)
 
-    blocks = build_blocks(new, ending, current, today.strftime("%A, %d %B %Y"))
-    text = f"Daily Steam sales: {len(new)} new, {len(ending)} ending today ({len(current)} on sale)"
+    blocks = build_blocks(new, better, date.today().strftime("%A, %d %B %Y"))
+    text = f"Steam sales: {len(new)} new, {len(better)} cheaper than before"
 
     if dry_run:
         print(json.dumps({"text": text, "blocks": blocks}, indent=2, ensure_ascii=False))
@@ -358,8 +416,8 @@ def main():
         print(f"error: Slack post failed: {exc}", file=sys.stderr)
         return 1
 
-    save_state({"on_sale": list(on_sale.keys())})
-    print("digest posted")
+    save_state({"on_sale": new_state})
+    print("sale update posted")
     return 0
 
 

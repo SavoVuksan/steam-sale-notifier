@@ -6,8 +6,8 @@ nothing sits in RAM between runs, and the two scripts get independent schedules.
 
 | Unit | Schedule | Runs |
 |------|----------|------|
-| `steam-notifier.{service,timer}` | daily 09:00 | the sale digest (`notifier.py`) |
-| `steam-availability.{service,timer}` | hourly | the availability watcher (`availability.py`) |
+| `steam-notifier.{service,timer}` | daily 09:00 | sale change alerts (`notifier.py`) |
+| `steam-availability.{service,timer}` | every 20 min | the availability watcher (`availability.py`) |
 
 Both call `docker compose run --rm <service>`, so the [docker-compose.yml](../../docker-compose.yml)
 config (env from `.env`, persistent `state` volume) is reused as-is.
