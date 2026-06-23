@@ -2,6 +2,10 @@
   "_comment": "Hand-curated watch list. appid is the number in a title's store URL, e.g. https://store.steampowered.com/app/489830 -> 489830. 'name' is only a fallback label; the live name is pulled from Steam. Replace the examples below with your titles.",
   "titles": [
     {
+      "appid": 1222700,
+      "name": "A Way Out"
+    },
+    {
       "appid": 813780,
       "name": "Age of Empires II: Definitive Edition"
     },
@@ -10,8 +14,40 @@
       "name": "Baldur's Gate 3"
     },
     {
+      "appid": 2418040,
+      "name": "Beyond The Plastic Wall"
+    },
+    {
+      "appid": 274190,
+      "name": "Broforce"
+    },
+    {
+      "appid": 3844970,
+      "name": "Burglin' Gnomes"
+    },
+    {
+      "appid": 1091500,
+      "name": "Cyberpunk 2077"
+    },
+    {
+      "appid": 2138330,
+      "name": "Cyberpunk 2077: Phantom Liberty"
+    },
+    {
       "appid": 548430,
       "name": "Deep Rock Galactic"
+    },
+    {
+      "appid": 2605790,
+      "name": "Deep Rock Galactic: Rogue Core"
+    },
+    {
+      "appid": 2592160,
+      "name": "Dispatch"
+    },
+    {
+      "appid": 3167020,
+      "name": "Escape From Duckov"
     },
     {
       "appid": 2483190,
@@ -26,8 +62,40 @@
       "name": "It Takes Two"
     },
     {
+      "appid": 1250,
+      "name": "Killing Floor"
+    },
+    {
+      "appid": 232090,
+      "name": "Killing Floor 2"
+    },
+    {
       "appid": 550,
       "name": "Left 4 Dead 2"
+    },
+    {
+      "appid": 2950340,
+      "name": "LEGO® Harry Potter™ Collection"
+    },
+    {
+      "appid": 1966720,
+      "name": "Lethal Company"
+    },
+    {
+      "appid": 1977610,
+      "name": "Long Gone"
+    },
+    {
+      "appid": 4704690,
+      "name": "MECCHA CHAMELEON"
+    },
+    {
+      "appid": 2420660,
+      "name": "Neva"
+    },
+    {
+      "appid": 94400,
+      "name": "Nidhogg"
     },
     {
       "appid": 448510,
@@ -38,6 +106,18 @@
       "name": "Overcooked! 2"
     },
     {
+      "appid": 2694490,
+      "name": "Path of Exile 2"
+    },
+    {
+      "appid": 3527290,
+      "name": "PEAK"
+    },
+    {
+      "appid": 1296610,
+      "name": "Peglin"
+    },
+    {
       "appid": 1509960,
       "name": "PICO PARK"
     },
@@ -46,8 +126,24 @@
       "name": "PICO PARK 2"
     },
     {
+      "appid": 620,
+      "name": "Portal 2"
+    },
+    {
+      "appid": 3949040,
+      "name": "RV There Yet?"
+    },
+    {
+      "appid": 3030560,
+      "name": "Sloppy Forgeries"
+    },
+    {
       "appid": 2001120,
       "name": "Split Fiction"
+    },
+    {
+      "appid": 1962700,
+      "name": "Subnautica 2"
     },
     {
       "appid": 22320,
@@ -60,6 +156,14 @@
     {
       "appid": 292030,
       "name": "The Witcher 3: Wild Hunt"
+    },
+    {
+      "appid": 1604030,
+      "name": "V Rising"
+    },
+    {
+      "appid": 1361210,
+      "name": "Warhammer 40,000: Darktide"
     },
     {
       "appid": 1730700,
