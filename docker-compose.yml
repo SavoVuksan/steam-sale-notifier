@@ -48,10 +48,11 @@ services:
       dockerfile: Dockerfile.webui
     image: steam-sale-webui
     env_file: .env
-    # Run as root so the UI can WRITE the bind-mounted titles.json/watchlist.json.
-    # Under rootless Docker, container-root maps to your unprivileged host user,
-    # so the files stay owned by you on the host (not actually root).
-    user: "0:0"
+    # Run as your own host UID so the UI can WRITE the bind-mounted
+    # titles.json/watchlist.json with the right ownership. This now runs on
+    # the root Docker daemon (no rootless userns remap), so "user: 0:0" would
+    # mean actual root and leave those files root-owned on the host.
+    user: "1342071685:1342071685"
     environment:
       CONFIG_DIR: /app
     ports:
