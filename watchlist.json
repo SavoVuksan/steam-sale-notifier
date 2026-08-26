@@ -1,9 +1,10 @@
 {
-  "_comment": "Items to watch for availability (coming-soon games or hardware). appid is the number in the store URL. The watcher alerts when an item becomes purchasable, or when its release date changes. Items already purchasable when first seen are alerted once.",
+  "_comment": "Items to watch for availability (coming-soon games or hardware). appid is the number in the store URL. The watcher alerts when an item becomes purchasable, or when its release date changes. Items already purchasable when first seen are alerted once. Optional 'signup_page' adds a third alert: the page's text is checked for reservation/waitlist markers, and you're told once when its signup opens. Steam's API exposes nothing about waitlists, so the page is the only signal — see SIGNUP_MARKERS in availability.py.",
   "items": [
     {
       "appid": 4165890,
-      "name": "Steam Frame"
+      "name": "Steam Frame",
+      "signup_page": "https://store.steampowered.com/hardware/steamframe"
     },
     {
       "appid": 4165910,

@@ -8,18 +8,28 @@ webhook when one of them:
 
   1. ✅ becomes purchasable  (a best_purchase_option / price appears)
   2. 🗓 gets a release-date change  (e.g. "To be announced" -> a real date)
+  3. 🎟 opens its reservation / waitlist signup  (store-page markers appear)
 
 The availability signal is the presence of `best_purchase_option` in Steam's
 IStoreBrowseService/GetItems response — that's "purchasable" regardless of
 whether the item is a game or hardware. An item already purchasable the first
 time it's seen is alerted once.
 
+The *signup* signal cannot come from that API at all: GetItems returns no
+waitlist/reservation/notify field of any kind (verified against Steam Frame on
+2026-08-26 — with every data_request flag set, a coming-soon item taking
+signups is indistinguishable from one that isn't). So an item may declare a
+`signup_page` in watchlist.json, and that page's text is checked for the
+markers Valve's reservation flow puts there. See SIGNUP_MARKERS below.
+
 Companion to notifier.py (the sale digest); shares the same webhook and the
 same GetItems endpoint. Run from cron. See README.md.
 """
 
+import gzip
 import json
 import os
+import re
 import sys
 import urllib.request
 import urllib.error
@@ -51,6 +61,51 @@ USER_AGENT = "lan-availability-watcher/1.0 (+internal LAN tooling)"
 GETITEMS_URL = "https://api.steampowered.com/IStoreBrowseService/GetItems/v1/"
 STORE_BASE = "https://store.steampowered.com/"
 BATCH_SIZE = 50
+
+# Reservation / waitlist signup detection, for items with a `signup_page`.
+#
+# Every term here was measured against Valve's own hardware pages on
+# 2026-08-26 and scores **0 on the Steam Frame page** (signup not open) and 0
+# on the store home, so today's total is zero and the watcher is silent until
+# something genuinely changes. Re-measure before adding one.
+SIGNUP_MARKERS = (
+    # Present on the pages whose signup has actually run — Steam Machine and
+    # Steam Controller. Counts there: reservation 58/7, waitlist 7/0,
+    # signup 4/0, "signed up" 2/0, randomization 3/0, shipping 3/0.
+    "reservation",
+    "waitlist",
+    "signup",
+    "signed up",
+    "randomization",
+    "shipping",
+    # Zero on all four pages today, so they cost nothing to watch and cover
+    # wording the Frame might use that the Machine and Controller didn't.
+    "join the waitlist",
+    "reserve your",
+    "sign up for a reservation",
+    "reservation email",
+    "reservation window",
+    "request an invite",
+    "pre-order",
+    "preorder",
+    "add to cart",
+    "in stock",
+    "limited quantities",
+    "purchase window",
+    "estimated ship",
+    "order now",
+    "secure your",
+    "get in line",
+)
+
+# Deliberately NOT markers, however obvious they look: "reserve" / "reserved"
+# (1 hit on the Frame page today), "notify me" (1), "sign up" (4), "buy now"
+# (2) and "queue" (2). The Frame's page links to the other two products'
+# signups, so those words are already there and would fire immediately.
+#
+# Two hits are required so that a single stray or cross-promo mention of
+# another product's reservation can't raise the alert on its own.
+SIGNUP_MIN_HITS = 2
 
 
 # --- Data fetch ---------------------------------------------------------------
@@ -108,6 +163,62 @@ def parse_item(item):
     }
 
 
+def fetch_page(url):
+    """Return a store page's HTML, or None if it can't be fetched.
+
+    Asks for gzip explicitly: these hardware pages are ~2 MB uncompressed and
+    this runs every 20 minutes.
+    """
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": USER_AGENT, "Accept-Encoding": "gzip", "Accept-Language": "en"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
+            raw = resp.read()
+            if (resp.headers.get("Content-Encoding") or "").lower() == "gzip":
+                raw = gzip.decompress(raw)
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        print(f"warning: signup page fetch failed for {url}: {exc}", file=sys.stderr)
+        return None
+    return raw.decode("utf-8", "replace")
+
+
+def signup_status(item):
+    """Return "open" / "closed" for an item's signup page, or None if unknown.
+
+    None means "couldn't tell this run" — no signup_page configured, or the
+    fetch failed — and the caller then keeps whatever it already knew rather
+    than inventing a transition.
+    """
+    url = item.get("signup_page")
+    if not url:
+        return None
+    html = fetch_page(url)
+    if html is None:
+        return None
+    low = html.lower()
+
+    # Confirm we're looking at the right product page before trusting a
+    # "closed" verdict. Steam answers an unknown /hardware/<slug> with a 200
+    # and the generic "Steam Hardware" page, so a typo'd URL would otherwise
+    # read as a permanently closed signup and quietly never alert — the one
+    # failure mode that costs you the launch. Unknown beats a confident wrong.
+    #
+    # The check is against <title> ("Steam Frame"), not the body: the generic
+    # page and the store home both mention every product by name somewhere,
+    # and rel=canonical just echoes whatever URL was requested.
+    title = re.search(r"<title>(.*?)</title>", html, re.S | re.I)
+    title_text = title.group(1).strip().lower() if title else ""
+    if item.get("name", "").lower() not in title_text:
+        print(f"warning: {url} has title {title_text!r}, not the page for "
+              f"{item.get('name')!r}; signup state unknown this run", file=sys.stderr)
+        return None
+
+    hits = sum(low.count(marker) for marker in SIGNUP_MARKERS)
+    return "open" if hits >= SIGNUP_MIN_HITS else "closed"
+
+
 # --- State --------------------------------------------------------------------
 
 
@@ -151,12 +262,19 @@ def date_line(info, old_msg):
     return f"• <{info['url']}|*{info['name']}*> — release date: {info['release_msg']} (was: {old})"
 
 
+def signup_line(item):
+    url = item.get("signup_page", "")
+    return f"• <{url}|*{item.get('name', item['appid'])}*> — reservation / waitlist signup is open"
+
+
 def section(title, lines):
     return {"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*\n" + "\n".join(lines)}}
 
 
-def build_blocks(became_available, date_changes):
+def build_blocks(became_available, date_changes, signup_opened):
     blocks = [{"type": "header", "text": {"type": "plain_text", "text": "🛎️ Steam availability update"}}]
+    if signup_opened:
+        blocks.append(section("🎟 Reservation / waitlist signup open", [signup_line(i) for i in signup_opened]))
     if became_available:
         blocks.append(section("✅ Now available to purchase", [avail_line(i) for i, _ in became_available]))
     if date_changes:
@@ -195,19 +313,38 @@ def main():
 
     became_available = []  # (info, prev_status)
     date_changes = []      # (info, old_msg)
+    signup_opened = []     # watchlist items whose signup just opened
     new_state = {}
 
-    for appid in appids:
+    for item in items:
+        appid = str(item["appid"])
         info = current.get(appid)
+        was = prev.get(appid, {})
+
+        # Only ask about signups while the item isn't purchasable yet: once it
+        # has a price the waitlist is moot, and it saves a 2 MB page fetch per
+        # run. Falls back to the last known status if GetItems failed above.
+        known_status = ("available" if info["purchasable"] else "coming_soon") if info else was.get("status")
+        signup = signup_status(item) if known_status != "available" else None
+        if signup is None:
+            signup = was.get("signup")  # keep what we knew; never guess
+        elif signup == "open" and was.get("signup") != "open":
+            signup_opened.append(item)
+
         if not info:
-            # couldn't fetch this run; preserve whatever we knew
-            if appid in prev:
-                new_state[appid] = prev[appid]
+            # couldn't fetch this run; preserve whatever we knew, but don't lose
+            # a signup transition we just observed independently of GetItems
+            kept = dict(was)
+            if signup is not None:
+                kept["signup"] = signup
+            if kept:
+                new_state[appid] = kept
             continue
 
-        status = "available" if info["purchasable"] else "coming_soon"
+        status = known_status
         new_state[appid] = {"status": status, "release_msg": info["release_msg"]}
-        was = prev.get(appid, {})
+        if signup is not None:
+            new_state[appid]["signup"] = signup
 
         # 1. became purchasable (also fires for an item first seen already available)
         if status == "available" and was.get("status") != "available":
@@ -217,9 +354,9 @@ def main():
             date_changes.append((info, was.get("release_msg")))
 
     print(f"checked {len(appids)} items: {len(became_available)} now available, "
-          f"{len(date_changes)} release-date change(s)")
+          f"{len(date_changes)} release-date change(s), {len(signup_opened)} signup(s) opened")
 
-    if not became_available and not date_changes:
+    if not became_available and not date_changes and not signup_opened:
         if dry_run:
             print("(dry run) no availability changes; nothing would be posted")
             return 0
@@ -227,8 +364,9 @@ def main():
         print("no availability changes; nothing posted")
         return 0
 
-    blocks = build_blocks(became_available, date_changes)
-    text = f"Steam availability: {len(became_available)} now available, {len(date_changes)} date update(s)"
+    blocks = build_blocks(became_available, date_changes, signup_opened)
+    text = (f"Steam availability: {len(signup_opened)} signup(s) open, "
+            f"{len(became_available)} now available, {len(date_changes)} date update(s)")
 
     if dry_run:
         print(json.dumps({"text": text, "blocks": blocks}, indent=2, ensure_ascii=False))

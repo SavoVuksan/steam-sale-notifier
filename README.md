@@ -237,27 +237,74 @@ python -m webui.app             # http://localhost:8080
 ## Second mode: availability watcher (`availability.py`)
 
 Watches "coming soon" items — upcoming **games or hardware** (Steam Frame,
-Steam Machine, …) — and posts when one becomes **purchasable** or gets a
-**release-date change**. Same `GetItems` endpoint, same Slack webhook; its own
-`watchlist.json` and `availability_state.json`.
+Steam Machine, …) — and posts when one becomes **purchasable**, gets a
+**release-date change**, or **opens its reservation / waitlist signup**. Same
+`GetItems` endpoint, same Slack webhook; its own `watchlist.json` and
+`availability_state.json`.
 
-The signal is the presence of a `best_purchase_option` in the GetItems response
-— "purchasable" regardless of game vs. hardware. An item that's already
-purchasable the first time it's seen is alerted once.
+The availability signal is the presence of a `best_purchase_option` in the
+GetItems response — "purchasable" regardless of game vs. hardware. An item
+that's already purchasable the first time it's seen is alerted once.
+
+### Waitlist / reservation signups
+
+**Steam's API says nothing about waitlists.** Checked against Steam Frame on
+2026-08-26 with every `data_request` flag set: the response carries no
+waitlist, reservation, notify or purchase-option field at all, so a coming-soon
+item that is already taking signups looks identical to one that isn't. The only
+place that state is visible is the product page.
+
+So an item may carry an optional `signup_page`:
+
+```json
+{ "appid": 4165890,
+  "name": "Steam Frame",
+  "signup_page": "https://store.steampowered.com/hardware/steamframe" }
+```
+
+That page's text is checked for `SIGNUP_MARKERS`, and you're alerted **once**,
+when the total count first crosses `SIGNUP_MIN_HITS` (2). Totals measured the
+same day: **Steam Frame 0** (signup not open), Steam Controller 7, Steam
+Machine 77.
+
+The marker list has two halves. Six terms — `reservation`, `waitlist`,
+`signup`, `signed up`, `randomization`, `shipping` — are proven present on the
+pages whose signup has actually run. The rest (`join the waitlist`,
+`reserve your`, `pre-order`, `add to cart`, `limited quantities`, …) score zero
+on every Valve hardware page *and* the store home today, so they cost nothing
+to watch and cover wording the Frame might use that the other two didn't.
+
+**Re-measure before adding a term.** The obvious ones are booby-trapped:
+`reserve` / `reserved` (1 hit on the Frame page today), `notify me` (1),
+`sign up` (4), `buy now` (2) and `queue` (2) would all fire immediately,
+because the Frame's page links to the other two products' signups. That is
+what the two-hit floor is defending against.
+
+Two deliberate safeguards, both worth keeping:
+
+- **Only checked while the item isn't purchasable yet.** Once it has a price
+  the waitlist is moot, and it avoids a 2 MB page fetch every 20 minutes.
+- **The page's `<title>` must match the item's `name`.** Steam answers an
+  unknown `/hardware/<slug>` with a 200 and a generic "Steam Hardware" page,
+  so a typo'd URL would otherwise read as a permanently *closed* signup and
+  quietly never alert — the one failure mode that costs you the launch. A
+  mismatch logs a warning and records nothing instead.
 
 ```sh
 python3 availability.py --dry-run   # preview, posts nothing, no state change
 python3 availability.py             # posts to Slack and updates availability_state.json
 ```
 
-Edit `watchlist.json` (appid + name). Cron example, daily at 09:00:
+Edit `watchlist.json` (appid + name, plus an optional `signup_page`). Cron
+example, daily at 09:00:
 
 ```cron
 0 9 * * * SLACK_WEBHOOK_URL="https://hooks.slack.com/services/XXX/YYY/ZZZ" /usr/bin/python3 /opt/steam-sale-notifier/availability.py >> /var/log/steam-availability.log 2>&1
 ```
 
 - **When it posts:** only when something changes — an item becomes purchasable,
-  or its release-date message changes. Otherwise silent (state still updated).
+  its release-date message changes, or its signup opens. Otherwise silent
+  (state still updated).
 - **Already-available items** are alerted on first run, then go quiet. Delete
   `availability_state.json` to re-baseline.
 - **Polling cadence:** the systemd timer runs this **every 20 minutes** to catch
