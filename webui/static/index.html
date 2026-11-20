@@ -8,9 +8,9 @@
   <!-- React 18 + htm, vendored locally. htm (~1KB) gives JSX-like syntax via
        tagged template literals with NO build step and NO in-browser compiler,
        so the page loads instantly and reliably (no CDN, no Babel). -->
-  <script src="/vendor/react.production.min.js"></script>
-  <script src="/vendor/react-dom.production.min.js"></script>
-  <script src="/vendor/htm.umd.js"></script>
+  <script src="vendor/react.production.min.js"></script>
+  <script src="vendor/react-dom.production.min.js"></script>
+  <script src="vendor/htm.umd.js"></script>
 
   <style>
     :root {
@@ -256,7 +256,7 @@
       const [toasts, toast] = useToasts();
 
       const refreshLists = useCallback(async () => {
-        try { setLists(await api("GET", "/api/lists")); }
+        try { setLists(await api("GET", "api/lists")); }
         catch (e) { toast(e.message, "err"); }
       }, [toast]);
 
@@ -269,7 +269,7 @@
       useEffect(() => {
         if (!appidKey) return;
         let active = true;
-        api("GET", `/api/prices?appids=${appidKey}`)
+        api("GET", `api/prices?appids=${appidKey}`)
           .then((d) => { if (active) setPrices((p) => ({ ...p, ...(d.prices || {}) })); })
           .catch(() => {});
         return () => { active = false; };
@@ -288,7 +288,7 @@
         setSearching(true);
         const t = setTimeout(async () => {
           try {
-            const data = await api("GET", `/api/search?q=${encodeURIComponent(q)}`, null, ctrl.signal);
+            const data = await api("GET", `api/search?q=${encodeURIComponent(q)}`, null, ctrl.signal);
             if (active) { setResults(data.results || []); setSearched(true); }
           } catch (e) {
             if (active && e.name !== "AbortError") { toast(e.message, "err"); setResults([]); setSearched(true); }
@@ -313,7 +313,7 @@
           return { ...prev, [which]: [...prev[which], { appid, name: name || String(appid) }].sort(byName) };
         });
         try {
-          const r = await api("POST", `/api/${which}`, { appid, name });
+          const r = await api("POST", `api/${which}`, { appid, name });
           setLists((prev) => ({ ...prev, [which]: r.entries }));
           toast(r.added ? `Added “${r.entry.name}” to ${which}` : `Already in ${which}`, r.added ? "ok" : "err");
         } catch (e) {
@@ -324,7 +324,7 @@
 
       const remove = useCallback(async (which, appid) => {
         try {
-          const r = await api("DELETE", `/api/${which}/${appid}`);
+          const r = await api("DELETE", `api/${which}/${appid}`);
           setLists((prev) => ({ ...prev, [which]: r.entries }));
         } catch (e) { toast(e.message, "err"); }
       }, [toast]);

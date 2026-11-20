@@ -69,6 +69,24 @@ python3 notifier.py                # posts to Slack (if anything changed) and up
 ```
 No third-party packages — standard library only (Python 3.8+).
 
+## Container images (CI)
+
+GitHub Actions (`.github/workflows/images.yml`) builds two images on every
+push to `main` and publishes them as public packages:
+
+- `ghcr.io/savovuksan/steam-sale-notifier` - `notifier.py` / `availability.py`
+- `ghcr.io/savovuksan/steam-sale-webui` - the web UI
+
+Both read their lists from `CONFIG_DIR` (default: next to the script), the
+scripts keep their state in `STATE_DIR`. Pointing both at one volume (e.g.
+`/data`) lets the web UI and the scripts share the lists without bind-mounting
+single files. The web UI uses relative URLs, so it also works behind a reverse
+proxy under a sub-path (e.g. `/steam/`).
+
+The xaihelper server runs these images with rootless Podman, managed by
+Ansible (repo `infra-ansible`, role `steam_sale`); the Docker + systemd setup
+below is the older way and still works for a manual install.
+
 ## Deploy on an always-on server (Docker + systemd)
 
 The intended production setup: both scripts run as **one-shot containers on
