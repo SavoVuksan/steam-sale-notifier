@@ -46,7 +46,10 @@ from envfile import load_dotenv
 load_dotenv()
 
 HERE = Path(__file__).resolve().parent
-WATCHLIST_FILE = HERE / "watchlist.json"
+# The curated list lives next to the script by default; set CONFIG_DIR to read
+# it from elsewhere (e.g. a volume shared with the web UI, which uses the same
+# variable).
+WATCHLIST_FILE = Path(os.environ.get("CONFIG_DIR", HERE)) / "watchlist.json"
 # State lives next to the script by default; set STATE_DIR to redirect it to a
 # persistent location (e.g. a mounted volume when running in a container).
 STATE_DIR = Path(os.environ.get("STATE_DIR", HERE))
